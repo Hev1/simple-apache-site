@@ -1,0 +1,53 @@
+name: Deploy Apache Site
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Apache
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y apache2
+        
+    - name: Configure Apache
+      run: |
+        # Stop default Apache service
+        sudo systemctl stop apache2
+        
+        # Copy site files to Apache document root
+        sudo cp -r public-html/* /var/www/html/
+        
+        # Set proper permissions
+        sudo chown -R www-data:www-data /var/www/html/
+        sudo chmod -R 755 /var/www/html/
+        
+    - name: Start Apache
+      run: |
+        sudo systemctl start apache2
+        sudo systemctl enable apache2
+        
+    - name: Test Apache deployment
+      run: |
+        # Wait for Apache to start
+        sleep 5
+        
+        # Test if Apache is serving our pages
+        curl -f http://localhost/ | grep "Hello from Apache!"
+        curl -f http://localhost/about.html | grep "About Page"
+        
+        echo "✅ Apache deployment successful!"
+        
+    - name: Display Apache status
+      run: |
+        sudo systemctl status apache2 --no-pager
+        echo "Apache is running and serving the site!"

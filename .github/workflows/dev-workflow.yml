@@ -1,0 +1,114 @@
+name: Development Workflow
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install HTML validator
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y tidy html5validator
+        
+    - name: Validate HTML files
+      run: |
+        echo "🔍 Validating HTML syntax..."
+        
+        for file in public-html/*.html; do
+          echo "Validating $file..."
+          
+          # Use tidy for basic validation
+          if ! tidy -q -e "$file"; then
+            echo "⚠️ Tidy found issues in $file"
+          fi
+          
+          # Use html5validator for HTML5 compliance
+          if command -v html5validator &> /dev/null; then
+            html5validator "$file" || echo "⚠️ HTML5 validation issues in $file"
+          fi
+        done
+        
+        echo "✅ HTML validation complete"
+        
+    - name: Check for common issues
+      run: |
+        echo "🔍 Checking for common web development issues..."
+        
+        # Check for missing alt attributes in images
+        if grep -r "<img" public-html/ | grep -v "alt="; then
+          echo "⚠️ Found images without alt attributes"
+        fi
+        
+        # Check for inline styles (should use CSS files)
+        if grep -r "style=" public-html/; then
+          echo "ℹ️ Found inline styles - consider using external CSS"
+        fi
+        
+        # Check for missing meta viewport for mobile
+        if ! grep -r "viewport" public-html/; then
+          echo "ℹ️ Consider adding viewport meta tag for mobile responsiveness"
+        fi
+        
+        echo "✅ Code quality check complete"
+
+  quick-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Quick Apache test
+      run: |
+        # Install and start Apache
+        sudo apt-get update
+        sudo apt-get install -y apache2
+        
+        # Copy files
+        sudo cp -r public-html/* /var/www/html/
+        sudo systemctl start apache2
+        
+        # Quick tests
+        sleep 3
+        curl -f http://localhost/ > /dev/null && echo "✅ Index page loads"
+        curl -f http://localhost/about.html > /dev/null && echo "✅ About page loads"
+        
+        echo "🎉 Quick test passed!"
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Basic security checks
+      run: |
+        echo "🔒 Running basic security checks..."
+        
+        # Check for potentially dangerous content
+        if grep -ri "script" public-html/ | grep -v "<!-- "; then
+          echo "⚠️ Found script tags - review for XSS vulnerabilities"
+        fi
+        
+        # Check for external links that might need security review
+        if grep -ri "http://" public-html/; then
+          echo "ℹ️ Found HTTP links - consider using HTTPS"
+        fi
+        
+        # Check for forms without proper security
+        if grep -ri "<form" public-html/ && ! grep -ri "csrf\|token" public-html/; then
+          echo "ℹ️ Found forms - ensure proper security measures"
+        fi
+        
+        echo "✅ Security scan complete"

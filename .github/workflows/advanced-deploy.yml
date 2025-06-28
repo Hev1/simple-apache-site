@@ -1,0 +1,173 @@
+name: Advanced Apache CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  APACHE_VERSION: "2.4"
+  SITE_NAME: "simple-apache-site"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Validate HTML files
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y tidy
+        
+        echo "🔍 Validating HTML files..."
+        for file in public-html/*.html; do
+          echo "Checking $file..."
+          tidy -q -e "$file" || echo "⚠️ HTML validation warnings in $file"
+        done
+        echo "✅ HTML validation complete"
+        
+    - name: Check file structure
+      run: |
+        echo "📁 Project structure:"
+        find . -type f -name "*.html" -o -name "*.css" -o -name "*.js" | sort
+        
+        # Ensure required files exist
+        test -f public-html/index.html || { echo "❌ index.html not found"; exit 1; }
+        test -f public-html/about.html || { echo "❌ about.html not found"; exit 1; }
+        echo "✅ Required files present"
+
+  deploy-staging:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Apache for Staging
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y apache2
+        
+        # Configure staging environment
+        sudo a2enmod rewrite
+        sudo systemctl start apache2
+        
+    - name: Deploy to Staging
+      run: |
+        echo "🚀 Deploying to staging environment..."
+        sudo cp -r public-html/* /var/www/html/
+        sudo chown -R www-data:www-data /var/www/html/
+        sudo chmod -R 755 /var/www/html/
+        
+        # Add staging banner
+        sudo sed -i 's/<h1>/<h1 style="background: orange; padding: 10px;">[STAGING] /' /var/www/html/index.html
+        
+    - name: Test Staging Deployment
+      run: |
+        sleep 3
+        curl -f http://localhost/ | grep "STAGING"
+        echo "✅ Staging deployment successful!"
+
+  deploy-production:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Cache Apache installation
+      uses: actions/cache@v3
+      with:
+        path: /var/cache/apt
+        key: ${{ runner.os }}-apache-${{ env.APACHE_VERSION }}
+        
+    - name: Setup Apache for Production
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y apache2
+        
+        # Production configuration
+        sudo a2enmod rewrite
+        sudo a2enmod ssl
+        sudo a2enmod headers
+        
+        # Security headers configuration
+        sudo tee /etc/apache2/conf-available/security.conf > /dev/null << EOF
+        Header always set X-Frame-Options DENY
+        Header always set X-Content-Type-Options nosniff
+        Header always set X-XSS-Protection "1; mode=block"
+        Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        EOF
+        
+        sudo a2enconf security
+        sudo systemctl start apache2
+        
+    - name: Deploy to Production
+      run: |
+        echo "🚀 Deploying to production environment..."
+        
+        # Copy files with backup
+        sudo mkdir -p /var/backups/www
+        sudo cp -r /var/www/html/* /var/backups/www/ 2>/dev/null || true
+        
+        sudo cp -r public-html/* /var/www/html/
+        sudo chown -R www-data:www-data /var/www/html/
+        sudo chmod -R 755 /var/www/html/
+        
+        # Add production timestamp
+        echo "<!-- Deployed on $(date) -->" | sudo tee -a /var/www/html/index.html
+        
+    - name: Comprehensive Production Tests
+      run: |
+        sleep 5
+        
+        echo "🧪 Running production tests..."
+        
+        # Test main page
+        curl -f http://localhost/ | grep "Hello from Apache!"
+        
+        # Test about page
+        curl -f http://localhost/about.html | grep "About Page"
+        
+        # Test security headers
+        curl -I http://localhost/ | grep "X-Frame-Options"
+        
+        # Test Apache status
+        sudo systemctl is-active apache2
+        
+        echo "✅ All production tests passed!"
+        
+    - name: Create deployment artifact
+      run: |
+        # Create deployment package
+        mkdir -p deployment-artifacts
+        cp -r public-html deployment-artifacts/
+        echo "Deployment Date: $(date)" > deployment-artifacts/deployment-info.txt
+        echo "Git Commit: $GITHUB_SHA" >> deployment-artifacts/deployment-info.txt
+        echo "Deployed by: $GITHUB_ACTOR" >> deployment-artifacts/deployment-info.txt
+        
+    - name: Upload deployment artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: production-deployment-${{ github.sha }}
+        path: deployment-artifacts/
+        retention-days: 30
+        
+    - name: Deployment summary
+      run: |
+        echo "## 🎉 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: $GITHUB_SHA" >> $GITHUB_STEP_SUMMARY
+        echo "- **Deployed by**: $GITHUB_ACTOR" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ✅ Successful" >> $GITHUB_STEP_SUMMARY

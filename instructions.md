@@ -15,14 +15,12 @@
 
 ```bash
 git init
-git remote add origin https://github.com/YOUR-USERNAME/simple-apache-site.git
+git remote add origin https://github.com/hev1/simple-apache-site.git
 git add .
 git commit -m "Initial commit"
 git branch -M main
 git push -u origin main
 ```
-
-Replace `YOUR-USERNAME` with your GitHub username.
 
 ## Step 3: Follow the Lesson
 Now your files are on GitHub, follow the lesson instructions to:
